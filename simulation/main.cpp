@@ -1,70 +1,101 @@
 #include <iostream>
 #include <fstream>
-#include <include\libglnsvpos\glnsvpos.h>
-#include <include\libglnsvpos\rungekutta.h>
+#include <cmath>
 #include <ctime>
+#include <Runge_kutta.h>
 
 using namespace std;
-
-// 22 20  2 10 13 45  0.0 -.134212896228E-04 -.181898940355E-11  .495000000000E+05
-//      .311761962891E+04 -.179497814178E+01 -.186264514923E-08  .000000000000E+00
-//      .158781806641E+05 -.202221393585E+01 -.186264514923E-08 -.300000000000E+01
-//      .196852387695E+05  .192774677277E+01 -.186264514923E-08  .000000000000E+00
 
 int main()
 {
     time_t start, end;
-    double del_t = 1E-01;
-    double max_del = 0;
-    int i_max = 0;
-    int n = (int) 12*3600/del_t;
-    double **koord_raschet = new double * [n];
-    double *koord_file = new double[3];
-    ofstream out;
-    out.open("D:\\res_cpp.txt");
+    double dt = 0.1, T_eph = 49500 + 18 + 3*3600;
+    int n = (int) 12*3600/dt,  n_eph = (int) (T_eph-15*3600)/dt, i_delta = 0;
+    double t_G0 = 9*3600+18*60+10.5009,  w_e = 7.292115E-05,  t_G = t_G0 + w_e*(T_eph - 3*3600);
+    double cosTg = cos(t_G),  sinTg = sin(t_G);
+    double X = .311761962891E+07,  Y = .158781806641E+08,  Z = .196852387695E+08;
+    double Vx = -.179497814178E+04,  Vy = -.202221393585E+04,  Vz = .192774677277E+04;
+    double *Y0 = new double [6] {X*cosTg - Y*sinTg, X*sinTg + Y*cosTg, Z, Vx*cosTg - Vy*sinTg - w_e*(X*sinTg + Y*cosTg), Vx*sinTg + Vy*cosTg + w_e*(X*cosTg - Y*sinTg),Vz};
+    double **Yy = new double *[n];
+    double *t_12h = new double [n];
+    for (int i = 0; i < n; i++){
+        Yy[i] = new double [6];
+        t_12h[i] = 15*3600+i*dt;
+    }
+    double **Yy1 = new double *[n_eph];
+    for (int i = 0; i < n_eph; i++){
+        Yy1[i] = new double [6];
+    }
+    double **Yy2 = new double *[n-n_eph+1];
+    for (int i = 0; i < n-n_eph+1; i++){
+        Yy2[i] = new double [6];
+    }
+    for (int j = 0; j < 6; j++){
+        Yy1[0][j] = Y0[j];
+        Yy2[0][j] = Y0[j];
+    }
     time(&start);
-    ifstream in("D:\\res_mat.txt");
-    if (!in)
+    RungeKutta(T_eph, -dt, Yy1, n_eph,6);
+    RungeKutta(T_eph, dt, Yy2, n-n_eph+1,6);
+    for (int i =0; i < n; i++)
     {
-        cout << "ERORR: File from MATLAB not open!" << endl;
-    } else {
-        cout << "File from MATLAB open!" << endl;
-    }
-    for (int i = 0; i < n; i++)
-    {
-        koord_raschet[i] = new double [6];
-    }
-    koordinate_GLONASS(koord_raschet);
-    for (int i = 0; i < n; i++)
-    {
-        in >> koord_file[0] >> koord_file[1] >> koord_file[2];
-        string koord_str1 = to_string(koord_raschet[i][0]);
-        string koord_str2 = to_string(koord_raschet[i][1]);
-        string koord_str3 = to_string(koord_raschet[i][2]);
-        out << koord_str1 << "\t" << koord_str2 << "\t" << koord_str3 << endl;
-        for (int j = 0; j < 3; j++)
-        {
-            if (abs(koord_raschet[i][j] - koord_file[j]) > max_del)
+        if (i <= n_eph-1){
+            for (int j = 0; j < 6; j++)
             {
-                max_del = abs(koord_raschet[i][j] - koord_file[j]);
-                i_max = i;
+                Yy[i][j] = Yy1[n_eph-i-1][j];
+            }
+        } else {
+            for (int j = 0; j < 6; j++)
+            {
+                Yy[i][j] = Yy2[i-n_eph+1][j];
             }
         }
-        delete [] koord_raschet[i];
-        koord_raschet[i] = nullptr;
     }
     time(&end);
-    in.close();
-    out.close();
-    delete[] koord_raschet;
-    koord_raschet = nullptr;
-    delete[] koord_file;
-    koord_file = nullptr;
-    double seconds = difftime(end, start);
-    string seconds1 = to_string(seconds*1000000/n);
-    cout << "Srednee vremya vypolnenia: " << seconds1 << " ms" << endl;
-    string max_del1 = to_string(max_del);
-    cout << "Maksimalnaia raznitca koordinat: " << max_del1 << " m" << endl;
-    string imax = to_string(i_max);
-    cout << "Otchet s maksimalnoy raznitcei koordinat: " <<imax << endl;
+    for (int i = 0; i < n_eph; i++){
+        delete [] Yy1[i];
+    }
+    for (int i = 0; i < n-n_eph+1; i++){
+        delete [] Yy2[i];
+    }
+    delete [] Yy1;
+    delete [] Yy2;
+
+    double *Yy_matlab = new double[3];
+    double max_delta = 0;
+    ifstream input("D:\\MATLAB.txt");
+    if (!input){
+        cout << "Cant open file, check location of file" << endl;
+    } else {
+        cout << "OK, Matlab file opened" << endl;
+    }
+    ofstream output;
+    output.open("D:\\CPP.txt");
+    for (int i = 0; i < n; i++){
+        input >> Yy_matlab[0] >> Yy_matlab[1] >> Yy_matlab[2];
+        string YY_str1 = to_string(Yy[i][0]), YY_str2 = to_string(Yy[i][1]), YY_str3 = to_string(Yy[i][2]);
+        output << YY_str1 << "\t" << YY_str2 << "\t" << YY_str3 << endl;
+        for (int j = 0; j < 3; j++){
+            if (abs(Yy[i][j] - Yy_matlab[j]) > max_delta){
+                max_delta = abs(Yy[i][j] - Yy_matlab[j]);
+                i_delta = i;
+            }
+        }
+    }
+    time(&end);
+    input.close();
+    output.close();
+    delete [] t_12h;
+    delete [] Y0;
+    for (int i = 0; i < n; i++){
+        delete [] Yy[i];
+    }
+    delete [] Yy;
+    delete [] Yy_matlab;
+    double time_RK = difftime(end, start);
+    string time_RK1 = to_string(time_RK*1000000/n), max_delta1 = to_string(max_delta), idelta = to_string(i_delta);
+    cout << "time of work of one cicle~: " << time_RK1 << " mcs" << endl;
+    cout << "max delta of coords: " << max_delta1 << " m" << endl;
+    cout << "number of max delta: " << idelta << endl;
+    return 0;
 }
